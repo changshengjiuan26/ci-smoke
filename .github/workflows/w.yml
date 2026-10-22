@@ -5,12 +5,7 @@ on:
 jobs:
   t:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: python3 p.py
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: o
-          path: /tmp/o.json
+      - run: python3 d.py
