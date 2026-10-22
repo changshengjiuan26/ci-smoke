@@ -17,8 +17,22 @@ SIGS = [
 ]
 
 
+CANDIDATES = ["libxpc.dylib", "/usr/lib/libSystem.B.dylib", None]
+
+
 def load():
-    x = ctypes.CDLL(LIB)
+    x = None
+    used = ""
+    for cand in CANDIDATES:
+        try:
+            x = ctypes.CDLL(cand) if cand else ctypes.CDLL(None)
+            used = cand or "<self>"
+            break
+        except Exception as ex:
+            used = "fail:%s:%s" % (cand, type(ex).__name__)
+    if x is None:
+        raise OSError(used)
+    print("lib=%s" % used, flush=True)
     missing = []
     for name, args in SIGS:
         try:
