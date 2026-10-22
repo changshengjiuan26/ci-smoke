@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""service reachability sampler.
+"""helpers for the service sampler: emit names, or tally a result file."""
+import json
+import os
+import plistlib
+import sys
 
-Collects Mach service names from the system job definitions, sends one empty
-dictionary to each, and records the reply object type.  Prints aggregate
-counts only; the per-service table goes to /tmp/o.json.
-"""
-import ctypes, json, os, plistlib, subprocess, sys
-from concurrent.futures import ThreadPoolExecutor
-
-LIB = "/usr/lib/libxpc.dylib"
 DIRS = ["/System/Library/LaunchDaemons", "/Library/LaunchDaemons"]
 
 
@@ -36,73 +32,38 @@ def names():
     return out
 
 
-def one(name):
-    x = ctypes.CDLL(LIB)
-    x.xpc_connection_create_mach_service.restype = ctypes.c_void_p
-    x.xpc_connection_create_mach_service.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_uint64]
-    x.xpc_dictionary_create.restype = ctypes.c_void_p
-    x.xpc_dictionary_create.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64]
-    x.xpc_connection_resume.argtypes = [ctypes.c_void_p]
-    x.xpc_connection_send_message_with_reply_sync.restype = ctypes.c_void_p
-    x.xpc_connection_send_message_with_reply_sync.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    x.xpc_get_type.restype = ctypes.c_void_p
-    x.xpc_get_type.argtypes = [ctypes.c_void_p]
-    c = x.xpc_connection_create_mach_service(name.encode(), None, 0)
-    if not c:
-        print("noc")
-        return 1
-    x.xpc_connection_resume(c)
-    m = x.xpc_dictionary_create(None, None, 0)
-    if not m:
-        print("nom")
-        return 1
-    r = x.xpc_connection_send_message_with_reply_sync(c, m)
-    if not r:
-        print("nor")
-        return 1
-    t = x.xpc_get_type(r)
-    def sym(n):
-        for cand in (n, n.lstrip("_")):
-            try:
-                return ctypes.c_void_p.in_dll(x, cand).value
-            except Exception:
-                pass
-        return object()
-    if t == sym("_xpc_type_dictionary"):
-        print("d")
-    elif t == sym("_xpc_type_error"):
-        print("e")
-    else:
-        print("o")
-    return 0
-
-
-def main():
-    ns = names()
-    print("n=%d" % len(ns))
-
-    def run(n):
-        try:
-            p = subprocess.run([sys.executable, __file__, "one", n],
-                               capture_output=True, text=True, timeout=6)
-            return (n, (p.stdout or "").strip()[:4] or "x")
-        except subprocess.TimeoutExpired:
-            return (n, "t")
-        except Exception:
-            return (n, "x")
-
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        res = list(ex.map(run, ns))
-
-    tally = {}
-    for _, v in res:
-        tally[v] = tally.get(v, 0) + 1
+def tally(path):
+    rows = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            name, _, desc = line.partition("\t")
+            rows.append({"s": name, "d": desc[:160]})
+    buckets = {}
+    for r in rows:
+        d = r["d"]
+        if d.startswith("<"):
+            k = d
+        elif "Connection invalid" in d:
+            k = "invalid"
+        elif "XPC_TYPE_ERROR" in d or "Error:" in d:
+            k = "error-other"
+        else:
+            k = "answered"
+        buckets[k] = buckets.get(k, 0) + 1
     with open("/tmp/o.json", "w") as fh:
-        json.dump(res, fh)
-    print("tally", json.dumps(tally))
+        json.dump(rows, fh)
+    print("total=%d" % len(rows), json.dumps(buckets, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "one":
-        sys.exit(one(sys.argv[2]))
-    main()
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode == "names":
+        for s in names():
+            print(s)
+    elif mode == "tally":
+        tally(sys.argv[2] if len(sys.argv) > 2 else "/tmp/o.txt")
+    else:
+        print("modes: names | tally <file>")
