@@ -1,5 +1,7 @@
 name: ci
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
 jobs:
   t:
     runs-on: macos-15
